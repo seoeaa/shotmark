@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Simplified, hand-drawn symbolic companion to the generated desktop icon. -->
+  <g fill="#bebebe">
+    <path d="M1 1h5v2H3v3H1zm9 0h5v5h-2V3h-3zM1 10h2v3h3v2H1zm12 2h2v3h-5v-2h3z"/>
+    <path d="m5 9 5.7-5.7a1 1 0 0 1 1.4 0l.6.6a1 1 0 0 1 0 1.4L7 11l-3 1z"/>
+  </g>
+</svg>

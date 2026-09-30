@@ -1,0 +1,13 @@
+.deps/
+.deps-stage.*/
+.review-backups/
+__pycache__/
+*.pyc
+dist/
+*.deb
+*.log
+.env
+.env.*
+*.pem
+*.key
+.venv/

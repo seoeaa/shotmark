@@ -1,0 +1,95 @@
+name: Build and release Debian package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi python3-cairo python3-gi-cairo \
+            gir1.2-gtk-4.0 gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 \
+            xvfb xauth dbus-x11 desktop-file-utils python3-pil
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          expected="v$(/usr/bin/python3 -c 'from app_info import VERSION; print(VERSION)')"
+          test "$GITHUB_REF_NAME" = "$expected"
+      - name: Compile and test without capturing the desktop
+        run: |
+          /usr/bin/python3 -m py_compile *.py tests/*.py scripts/*.py packaging/*.py
+          bash -n bootstrap-deps.sh
+          timeout 90 dbus-run-session --config-file tests/dbus.conf -- \
+            xvfb-run -a env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
+            GSK_RENDERER=cairo GTK_A11Y=none \
+            /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Build package and checksums
+        run: |
+          /usr/bin/python3 packaging/build_deb.py
+          (cd dist && sha256sum --check SHA256SUMS)
+      - name: Install built package and test installed runtime
+        run: |
+          sudo apt-get install -y ./dist/shotmark_*_all.deb
+          /usr/bin/shotmark --version
+          desktop-file-validate /usr/share/applications/io.github.shotmark.Shotmark.desktop
+          sample_dir=$(mktemp -d)
+          timeout 20 dbus-run-session --config-file tests/dbus.conf -- \
+            xvfb-run -a env -u WAYLAND_DISPLAY GDK_BACKEND=x11 \
+            GSK_RENDERER=cairo GTK_A11Y=none \
+            /usr/bin/shotmark --selftest "$sample_dir/sample.png"
+          test -s "$sample_dir/sample.png"
+          sudo apt-get remove -y shotmark
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: shotmark-deb
+          path: |
+            dist/*.deb
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: shotmark-deb
+          path: dist
+      - name: Publish prerelease with ready-to-install package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" ./*.deb SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" ./*.deb SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease \
+              --title "Shotmark $GITHUB_REF_NAME" \
+              --notes 'Linux screenshot annotator. Download the .deb and install with sudo apt install ./shotmark_*_all.deb on Ubuntu 24.04. Early prototype: review the README limitations before use. SHA256SUMS is included.'
+          fi
